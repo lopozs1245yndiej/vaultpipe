@@ -1,76 +1,71 @@
-// Package sync orchestrates reading secrets from Vault and writing them
-// to a local .env file.
 package sync
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/your-org/vaultpipe/internal/audit"
-	"github.com/your-org/vaultpipe/internal/config"
-	"github.com/your-org/vaultpipe/internal/diff"
-	"github.com/your-org/vaultpipe/internal/envwriter"
+	"github.com/user/vaultpipe/internal/audit"
+	"github.com/user/vaultpipe/internal/config"
+	"github.com/user/vaultpipe/internal/envwriter"
+	"github.com/user/vaultpipe/internal/rotate"
+	"github.com/user/vaultpipe/internal/vault"
 )
 
-// VaultReader is the interface satisfied by vault.Client.
+// VaultReader is the interface for reading secrets from Vault.
 type VaultReader interface {
-	ReadSecrets(path string) (map[string]string, error)
+	ReadSecrets(ctx context.Context, path string) (map[string]string, error)
 }
 
-// Syncer coordinates a single sync operation.
+// Syncer orchestrates reading from Vault and writing to an .env file.
 type Syncer struct {
-	cfg    *config.Config
-	vault  VaultReader
-	logger *audit.Logger
+	cfg      *config.Config
+	vault    VaultReader
+	writer   *envwriter.Writer
+	rotator  *rotate.Rotator
+	auditor  *audit.Logger
 }
 
-// New creates a Syncer with the provided dependencies.
-func New(cfg *config.Config, vault VaultReader, logger *audit.Logger) *Syncer {
-	return &Syncer{cfg: cfg, vault: vault, logger: logger}
-}
-
-// Run executes the sync: reads secrets, computes a diff, writes the .env
-// file, and logs an audit entry.
-func (s *Syncer) Run() error {
-	secrets, err := s.vault.ReadSecrets(s.cfg.SecretPath)
+// New creates a Syncer wired with a real Vault client and env writer.
+func New(cfg *config.Config, auditor *audit.Logger) (*Syncer, error) {
+	client, err := vault.NewClient(cfg.VaultAddr, cfg.VaultToken)
 	if err != nil {
-		s.logEntry(nil, "failure", err)
+		return nil, fmt.Errorf("sync: create vault client: %w", err)
+	}
+	writer := envwriter.NewWriter(cfg.EnvFilePath, cfg.Namespace)
+	rotator := rotate.New(cfg.BackupDir, cfg.MaxBackups)
+	return &Syncer{
+		cfg:     cfg,
+		vault:   client,
+		writer:  writer,
+		rotator: rotator,
+		auditor: auditor,
+	}, nil
+}
+
+// Run reads secrets from Vault, rotates the existing .env file, and writes
+// the new secrets. It logs the operation via the audit logger when provided.
+func (s *Syncer) Run(ctx context.Context) error {
+	secrets, err := s.vault.ReadSecrets(ctx, s.cfg.SecretPath)
+	if err != nil {
 		return fmt.Errorf("sync: read secrets: %w", err)
 	}
 
-	w, err := envwriter.NewWriter(s.cfg.OutputFile)
-	if err != nil {
-		s.logEntry(nil, "failure", err)
-		return fmt.Errorf("sync: open output: %w", err)
+	if err := s.rotator.Rotate(s.cfg.EnvFilePath); err != nil {
+		return fmt.Errorf("sync: rotate env file: %w", err)
 	}
 
-	changes, err := diff.Compare(s.cfg.OutputFile, secrets)
-	if err != nil {
-		// Non-fatal: diff failure should not block the write.
-		changes = map[string]string{}
+	if err := s.writer.Write(secrets); err != nil {
+		return fmt.Errorf("sync: write env file: %w", err)
 	}
 
-	if err := w.Write(secrets, s.cfg.Namespace); err != nil {
-		s.logEntry(changes, "failure", err)
-		return fmt.Errorf("sync: write env: %w", err)
+	if s.auditor != nil {
+		_ = s.auditor.Log(audit.Entry{
+			Operation:  "sync",
+			SecretPath: s.cfg.SecretPath,
+			EnvFile:    s.cfg.EnvFilePath,
+			KeyCount:   len(secrets),
+		})
 	}
 
-	s.logEntry(changes, "success", nil)
 	return nil
-}
-
-func (s *Syncer) logEntry(changes map[string]string, status string, err error) {
-	if s.logger == nil {
-		return
-	}
-	entry := audit.Entry{
-		SecretPath: s.cfg.SecretPath,
-		OutputFile: s.cfg.OutputFile,
-		Namespace:  s.cfg.Namespace,
-		Changes:    changes,
-		Status:     status,
-	}
-	if err != nil {
-		entry.Error = err.Error()
-	}
-	_ = s.logger.Log(entry)
 }
