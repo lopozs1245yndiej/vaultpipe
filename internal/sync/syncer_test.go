@@ -1,102 +1,83 @@
 package sync_test
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/yourusername/vaultpipe/internal/config"
-	"github.com/yourusername/vaultpipe/internal/sync"
+	"github.com/your-org/vaultpipe/internal/audit"
+	"github.com/your-org/vaultpipe/internal/config"
+	"github.com/your-org/vaultpipe/internal/sync"
 )
 
-func newMockVault(t *testing.T, data map[string]interface{}) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		payload := map[string]interface{}{
-			"data": map[string]interface{}{"data": data},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(payload)
-	}))
+type mockVault struct {
+	secrets map[string]string
+	err     error
+}
+
+func (m *mockVault) ReadSecrets(_ string) (map[string]string, error) {
+	return m.secrets, m.err
+}
+
+func newMockVault(secrets map[string]string, err error) *mockVault {
+	return &mockVault{secrets: secrets, err: err}
 }
 
 func TestRun_WritesEnvFile(t *testing.T) {
-	srv := newMockVault(t, map[string]interface{}{
-		"APP_KEY": "secret123",
-		"APP_DEBUG": "false",
-	})
-	defer srv.Close()
-
-	out := filepath.Join(t.TempDir(), ".env")
-
+	out := t.TempDir() + "/.env"
 	cfg := &config.Config{
-		VaultAddr:  srv.URL,
-		VaultToken: "test-token",
-		SecretPath: "secret/data/myapp",
+		SecretPath: "secret/data/app",
 		OutputFile: out,
-		Namespace:  "",
 	}
+	logger, _ := audit.NewLogger("")
+	defer logger.Close()
 
-	s, err := sync.New(cfg)
-	if err != nil {
-		t.Fatalf("New() error: %v", err)
-	}
-
+	s := sync.New(cfg, newMockVault(map[string]string{"KEY": "val"}, nil), logger)
 	if err := s.Run(); err != nil {
-		t.Fatalf("Run() error: %v", err)
+		t.Fatalf("Run: %v", err)
 	}
-
-	bytes, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatalf("reading output file: %v", err)
-	}
-
-	content := string(bytes)
-	if !strings.Contains(content, "APP_KEY") {
-		t.Errorf("expected APP_KEY in output, got:\n%s", content)
+	data, _ := os.ReadFile(out)
+	if !strings.Contains(string(data), "KEY=val") {
+		t.Errorf("expected KEY=val in output, got: %s", data)
 	}
 }
 
 func TestRun_WithNamespaceFilter(t *testing.T) {
-	srv := newMockVault(t, map[string]interface{}{
-		"APP_KEY":  "secret123",
-		"DB_PASS":  "dbpass",
-	})
-	defer srv.Close()
-
-	out := filepath.Join(t.TempDir(), ".env")
-
+	out := t.TempDir() + "/.env"
 	cfg := &config.Config{
-		VaultAddr:  srv.URL,
-		VaultToken: "test-token",
-		SecretPath: "secret/data/myapp",
+		SecretPath: "secret/data/app",
 		OutputFile: out,
 		Namespace:  "APP",
 	}
+	logger, _ := audit.NewLogger("")
+	defer logger.Close()
 
-	s, err := sync.New(cfg)
-	if err != nil {
-		t.Fatalf("New() error: %v", err)
-	}
-
+	secrets := map[string]string{"APP_KEY": "v1", "OTHER_KEY": "v2"}
+	s := sync.New(cfg, newMockVault(secrets, nil), logger)
 	if err := s.Run(); err != nil {
-		t.Fatalf("Run() error: %v", err)
+		t.Fatalf("Run: %v", err)
 	}
+	data, _ := os.ReadFile(out)
+	if !strings.Contains(string(data), "APP_KEY=v1") {
+		t.Errorf("expected APP_KEY in output")
+	}
+	if strings.Contains(string(data), "OTHER_KEY") {
+		t.Errorf("unexpected OTHER_KEY in filtered output")
+	}
+}
 
-	bytes, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatalf("reading output file: %v", err)
+func TestRun_VaultError_ReturnsError(t *testing.T) {
+	out := t.TempDir() + "/.env"
+	cfg := &config.Config{
+		SecretPath: "secret/data/app",
+		OutputFile: out,
 	}
+	logger, _ := audit.NewLogger("")
+	defer logger.Close()
 
-	content := string(bytes)
-	if strings.Contains(content, "DB_PASS") {
-		t.Errorf("DB_PASS should be filtered out by namespace APP, got:\n%s", content)
-	}
-	if !strings.Contains(content, "APP_KEY") {
-		t.Errorf("expected APP_KEY in output, got:\n%s", content)
+	s := sync.New(cfg, newMockVault(nil, errors.New("vault unavailable")), logger)
+	if err := s.Run(); err == nil {
+		t.Fatal("expected error from vault failure, got nil")
 	}
 }
