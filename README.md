@@ -1,6 +1,4 @@
-# vaultpipe
-
-> Sync secrets from HashiCorp Vault into local `.env` files with namespace filtering.
+# v Sync secrets from HashiCorp Vault into local `.env` files with namespace filtering.
 
 ---
 
@@ -40,6 +38,7 @@ This will pull all secrets under the `secret/myapp` namespace and write them to 
 | `--namespace` | Secret namespace/path to sync | required |
 | `--output` | Output `.env` file path | `.env` |
 | `--overwrite` | Overwrite existing `.env` file | `false` |
+| `--dry-run` | Print secrets to stdout without writing to file | `false` |
 
 ### Example Output
 
@@ -48,6 +47,19 @@ DB_HOST=postgres.internal
 DB_PASSWORD=supersecret
 API_KEY=abc123
 ```
+
+---
+
+## Environment Variables
+
+All flags can also be set via environment variables:
+
+| Flag | Environment Variable |
+|------|----------------------|
+| `--addr` | `VAULT_ADDR` |
+| `--token` | `VAULT_TOKEN` |
+| `--namespace` | `VAULTPIPE_NAMESPACE` |
+| `--output` | `VAULTPIPE_OUTPUT` |
 
 ---
 
