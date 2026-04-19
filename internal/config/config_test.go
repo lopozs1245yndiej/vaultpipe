@@ -83,3 +83,10 @@ filter:
 		t.Errorf("expected 2 filters, got %d", len(cfg.Filter))
 	}
 }
+
+func TestLoad_NonExistentFile(t *testing.T) {
+	_, err := Load("/nonexistent/path/vaultpipe.yaml")
+	if err == nil {
+		t.Fatal("expected error when config file does not exist, got nil")
+	}
+}
