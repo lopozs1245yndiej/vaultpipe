@@ -2,6 +2,7 @@ package watch_test
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"testing"
 	"time"
@@ -63,5 +64,19 @@ func TestRun_ContinuesOnSyncError(t *testing.T) {
 	_ = w.Run(ctx)
 	if ms.calls < 2 {
 		t.Errorf("expected retries despite error, got %d calls", ms.calls)
+	}
+}
+
+func TestRun_ZeroCallsBeforeFirstTick(t *testing.T) {
+	ms := &mockSyncer{}
+	// Use a very long interval so the ticker never fires within the timeout.
+	w := newWatcher(ms, 10*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_ = w.Run(ctx)
+	if ms.calls != 0 {
+		t.Errorf("expected 0 sync calls before first tick, got %d", ms.calls)
 	}
 }
