@@ -18,4 +18,13 @@
 //
 // Use Apply to filter a secrets map to only permitted keys, and Violations to
 // audit which keys in a map would be denied.
+//
+// # Pattern Matching
+//
+// Key patterns support a single '*' wildcard that matches any sequence of
+// characters (including the empty string). For example:
+//
+//   - "SECRET_*" matches "SECRET_KEY" and "SECRET_DB_PASS" but not "MY_SECRET"
+//   - "*"        matches every key (useful as a catch-all rule)
+//   - "DB_HOST"  matches only the exact key "DB_HOST"
 package policy
