@@ -93,3 +93,14 @@ func TestFailures_TracksCount(t *testing.T) {
 		t.Errorf("expected 2 failures, got %d", b.Failures())
 	}
 }
+
+func TestRecordFailure_HalfOpen_ReturnsToOpen(t *testing.T) {
+	b, _ := circuit.New(1, 10*time.Millisecond)
+	b.RecordFailure()
+	time.Sleep(20 * time.Millisecond)
+	_ = b.Allow() // transitions to half-open
+	b.RecordFailure()
+	if b.State() != circuit.StateOpen {
+		t.Errorf("expected StateOpen after failure in half-open, got %v", b.State())
+	}
+}
